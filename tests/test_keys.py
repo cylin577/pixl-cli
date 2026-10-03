@@ -5,6 +5,7 @@ import unittest
 from pixl_cli.keys import read_key
 
 
+@unittest.skipIf(sys.platform == "win32", "pipe-based key tests need a POSIX tty")
 class TestReadKey(unittest.TestCase):
     def _via_pipe(self, data):
         r, w = os.pipe()
