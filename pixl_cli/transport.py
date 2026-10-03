@@ -9,8 +9,6 @@ except ImportError as e:
     raise ImportError("bleak is required for BLE transport: uv sync") from e
 
 from .consts import (
-    DFU_CP_UUID,
-    DFU_PP_UUID,
     NUS_CHAR_RX_UUID,
     NUS_CHAR_TX_UUID,
     NUS_SERVICE_UUID,
@@ -59,7 +57,11 @@ class BleakSyncTransport:
         await self._client.connect()
         await self._client.start_notify(self.rx_uuid, self._on_rx)
         self.address = address
-        self.mtu_size = self._client.mtu_size or 247
+        try:
+            await self._client._acquire_mtu()
+        except AttributeError:
+            pass
+        self.mtu_size = self._client._mtu_size or 247
         self._connected = True
 
     def _on_rx(self, _handle, value):

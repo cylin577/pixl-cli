@@ -157,7 +157,7 @@ class PixlClient:
 
     def read_dir(self, path):
         validate_path(path)
-        frame = self._request(C.CMD_VFS_DIR_READ, path.encode("utf-8"))
+        frame = self._request(C.CMD_VFS_DIR_READ, encode_string(path))
         payload = frame.data
         entries = []
         pos = 0
@@ -178,11 +178,11 @@ class PixlClient:
 
     def create_dir(self, path):
         validate_path(path)
-        self._request(C.CMD_VFS_DIR_CREATE, path.encode("utf-8"))
+        self._request(C.CMD_VFS_DIR_CREATE, encode_string(path))
 
     def remove(self, path):
         validate_path(path)
-        self._request(C.CMD_VFS_REMOVE, path.encode("utf-8"))
+        self._request(C.CMD_VFS_REMOVE, encode_string(path))
 
     def rename(self, old_path, new_path):
         validate_path(old_path)
@@ -194,7 +194,7 @@ class PixlClient:
 
     def update_meta(self, path, meta):
         validate_path(path)
-        self._request(C.CMD_VFS_UPDATE_META, path.encode("utf-8") + build_meta(meta))
+        self._request(C.CMD_VFS_UPDATE_META, encode_string(path) + build_meta(meta))
 
     def exists(self, path):
         parent = path.rstrip("/")

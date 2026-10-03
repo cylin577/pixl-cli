@@ -367,7 +367,6 @@ def _execute_tui(args, cmd, console, timeout=10.0):
             if not session.is_connected():
                 session.reset()
 
-    from rich.console import Console as _Console
 
     with console.status(f"[bold]{cmd}..."):
         thread = threading.Thread(target=run)

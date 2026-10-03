@@ -201,4 +201,4 @@ class PixlFS:
     ]
 
     def mount(self, mountpoint, foreground=False):
-        self._fuse_cls(self._ops(), mountpoint, foreground=foreground, nothreads=True)
+        self._fuse_cls(self._ops, mountpoint, foreground=foreground, nothreads=True)

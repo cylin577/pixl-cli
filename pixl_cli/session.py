@@ -13,6 +13,9 @@ class Session:
 
     def client(self, args=None):
         with self._lock:
+            if self._client is not None and self._transport is not None and not self._transport._connected:
+                self._transport.disconnect()
+                self._client = None
             if self._client is not None:
                 return self._client
             address = getattr(args, "address", None)

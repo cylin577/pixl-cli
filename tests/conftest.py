@@ -53,12 +53,27 @@ def df_device_handler(sent):
         return []
     if frame.cmd == C.CMD_VFS_FILE_CLOSE:
         return [build_frame(frame.cmd, 0, 0)]
-    if frame.cmd == C.CMD_VFS_DRIVE_LIST:
-        name = b"External Flash"
-        payload = bytes([1, 0, ord("E")])
-        payload += len(name).to_bytes(2, "little")
-        payload += name
-        payload += (1024 * 1024).to_bytes(4, "little")
-        payload += (2048 * 1024).to_bytes(4, "little")
-        return [build_frame(frame.cmd, 0, 0, payload)]
+    if frame.cmd in (
+        C.CMD_VFS_DRIVE_LIST,
+        C.CMD_VFS_DIR_READ,
+        C.CMD_VFS_DIR_CREATE,
+        C.CMD_VFS_REMOVE,
+        C.CMD_VFS_RENAME,
+        C.CMD_VFS_UPDATE_META,
+    ):
+        if frame.cmd == C.CMD_VFS_DRIVE_LIST:
+            name = b"External Flash"
+            payload = bytes([1, 0, ord("E")])
+            payload += len(name).to_bytes(2, "little")
+            payload += name
+            payload += (1024 * 1024).to_bytes(4, "little")
+            payload += (2048 * 1024).to_bytes(4, "little")
+            return [build_frame(frame.cmd, 0, 0, payload)]
+        if frame.cmd == C.CMD_VFS_DIR_READ:
+            name = b"hello.txt"
+            payload = len(name).to_bytes(2, "little") + name
+            payload += (42).to_bytes(4, "little")
+            payload += bytes([C.VFS_TYPE_FILE, 0])
+            return [build_frame(frame.cmd, 0, 0, payload)]
+        return [build_frame(frame.cmd, 0, 0)]
     return [build_frame(frame.cmd, C.STATUS_UNSUPPORTED)]
