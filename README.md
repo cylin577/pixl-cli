@@ -7,9 +7,9 @@ Implements the wire formats documented in `docs/en/05+1-ble_protocol.md` (pixl d
 ## Install
 
 ```
-uv tool install --editable cli/ --with fusepy   # system-wide, editable, incl. fuse support
-uv sync --directory cli/ --group dev            # dev env with pytest + fusepy
-uv run --directory cli/ pixl info
+uv tool install --editable . --with fusepy   # system-wide, editable, incl. fuse support
+uv sync --directory . --group dev            # dev env with pytest + fusepy
+uv run --directory . pixl info
 ```
 
 `pixl mount` additionally needs the libfuse runtime (`libfuse2` package on Debian/Ubuntu).
@@ -69,8 +69,8 @@ pixl amiibolink mifa.bin --ver amiiloop
 ## Development
 
 ```
-uv sync --directory cli/ --group dev
-uv run --directory cli/ pytest tests/
+uv sync --directory . --group dev
+uv run --directory . pytest tests/
 ```
 
 Protocol layer is transport-injectable; tests use a mock BLE transport and require no hardware.
