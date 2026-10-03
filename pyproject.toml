@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pixl-cli"
+version = "0.1.0"
+description = "CLI for Pixl.js: BLE file transfer, VFS mount, DFU and amiibolink"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "GPL-2.0" }
+dependencies = [
+    "bleak>=0.20",
+    "pycryptodome>=3.19",
+]
+
+[project.optional-dependencies]
+fuse = ["fusepy>=3.0.1"]
+dev = ["pytest>=7"]
+
+[dependency-groups]
+dev = ["pytest>=7"]
+
+[project.scripts]
+pixl = "pixl_cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["pixl_cli*"]
