@@ -7,8 +7,8 @@ Implements the wire formats documented in `docs/en/05+1-ble_protocol.md` (pixl d
 ## Install
 
 ```
-uv sync --directory cli/            # core (bleak + pycryptodome)
-uv sync --directory "cli/" --extra fuse   # + fusepy for `pixl mount`
+uv tool install --editable cli/ --with fusepy   # system-wide, editable, incl. fuse support
+uv sync --directory cli/ --group dev            # dev env with pytest + fusepy
 uv run --directory cli/ pixl info
 ```
 
@@ -16,9 +16,11 @@ uv run --directory cli/ pixl info
 
 ## Usage
 
-Device is discovered by BLE name (`Pixl.js` by default; `amiibolink` for the amiibolink app). Use `--address <MAC>` to pin a specific device.
+Device is discovered by BLE name (`Pixl.js` by default; `amiibolink` for the amiibolink app, `pixl dfu` for the DFU bootloader). `pixl` with no arguments opens the TUI: pick a remembered device or scan for new ones, then run any command. Remembered devices persist in `~/.config/pixl-cli/devices.json` (`x` forgets, new picks/connects remember). Use `pixl scan` for a standalone TUI search or `--address <MAC>` to pin a specific device.
 
 ```
+pixl                               # no args → interactive TUI (device picker + all commands)
+pixl scan                          # interactive TUI device search
 pixl info                          # firmware version + BLE address
 pixl disks                         # list disks (I: internal, E: external)
 pixl format E                      # format a disk (destructive!)
@@ -32,7 +34,14 @@ pixl rm E:/b.bin
 pixl meta E:/amiibo/mifa.bin       # show file meta (notes/flags/amiibo id)
 pixl meta E:/amiibo/mifa.bin --note "my pick" --hide
 pixl dfu                           # reboot into DFU bootloader
+pixl ota pixjs_ota_v123.zip        # flash OTA package over BLE (Nordic secure DFU)
 ```
+
+The BLE connection is kept alive per session: run several commands against the same device and they reuse one connection (errors/disconnects reset it and the next command reconnects).
+
+### OTA update flow
+
+`pixl dfu` reboots the device into the DFU bootloader; in the TUI, the dfu action then waits for the device to come back as `pixl dfu` on the same MAC, auto-reconnects and opens an OTA package selector (local `.zip`/`.bin`), then flashes it with CRC-validated object transfer (Nordic secure DFU, service `0xFE59`). Standalone: `pixl ota <package.zip> --address <MAC>`.
 
 ### Mount as local drive
 

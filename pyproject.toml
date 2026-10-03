@@ -12,14 +12,14 @@ license = { text = "GPL-2.0" }
 dependencies = [
     "bleak>=0.20",
     "pycryptodome>=3.19",
+    "rich>=13",
 ]
 
 [project.optional-dependencies]
 fuse = ["fusepy>=3.0.1"]
-dev = ["pytest>=7"]
 
 [dependency-groups]
-dev = ["pytest>=7"]
+dev = ["pytest>=7", "fusepy>=3.0.1"]
 
 [project.scripts]
 pixl = "pixl_cli.main:main"
