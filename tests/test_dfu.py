@@ -20,18 +20,17 @@ class FakeDFUDevice:
         self.written_cp = []
         self.mtu_size = 247
         self.pending = []
-        self._packet_count = 0
         self.execute_count = 0
         self.object_size = 0
         self.state = None
+        self.prn_target = None
 
     def send(self, data):
         if self.state == "cmd":
             self.received_cmd.extend(data)
         elif self.state == "data":
             self.received.extend(data)
-            self._packet_count += 1
-            if self._packet_count % 10 == 0:
+            if self.prn_target and len(self.received) % (self.prn_target * 244) == 0:
                 self.pending.append(
                     struct.pack(
                         "<BBBII",
@@ -42,8 +41,6 @@ class FakeDFUDevice:
                         crc32(self.received),
                     )
                 )
-        if not self.received_cmd and self.state is None:
-            pass
 
     def send_with_response(self, data):
         self.written_cp.append(bytes(data))
@@ -75,6 +72,7 @@ class FakeDFUDevice:
         elif op == C.DFU_OP_ABORT:
             self.pending.append(struct.pack("<BBB", C.DFU_OP_RESPONSE, op, C.DFU_RES_SUCCESS))
         elif op == C.DFU_OP_RECEIPT_NOTIF_SET:
+            self.prn_target = data[1]
             self.pending.append(struct.pack("<BBB", C.DFU_OP_RESPONSE, op, C.DFU_RES_SUCCESS))
 
     def recv(self, timeout=None):
@@ -147,6 +145,9 @@ class TestSecureDFU(unittest.TestCase):
         ops = [w[0] for w in device.written_cp]
         self.assertEqual(ops[0], C.DFU_OP_ABORT)
         self.assertIn(C.DFU_OP_RECEIPT_NOTIF_SET, ops)
+        prn_write = next(w for w in device.written_cp if w[0] == C.DFU_OP_RECEIPT_NOTIF_SET)
+        self.assertEqual(prn_write[1], 0)  # PRN disabled — no racy receipt handling
+        self.assertEqual(device.prn_target, 0)
         self.assertEqual(ops.count(C.DFU_OP_OBJECT_EXECUTE), 1 + (len(fw_bin) + 243) // 244)
         self.assertEqual(device.received_cmd, init_dat)
         self.assertEqual(device.received, fw_bin)

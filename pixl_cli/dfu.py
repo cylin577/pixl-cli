@@ -71,13 +71,6 @@ class SecureDFUClient:
             chunk = data[offset : offset + chunk_len]
             self.transport.send(chunk)
             offset += len(chunk)
-            for n in self.transport.try_recv():
-                if n[0] == C.DFU_OP_RESPONSE and n[1] == C.DFU_OP_CRC_GET:
-                    crc, received = struct.unpack_from("<II", n, 3)
-                    if received != offset:
-                        raise PixlError(f"prn offset mismatch: {received} != {offset}")
-                    if crc != crc32(data[:offset]):
-                        raise PixlError(f"prn crc mismatch at {offset}")
             if progress:
                 progress(offset, total)
 
@@ -100,7 +93,11 @@ class SecureDFUClient:
             self.abort()
         except (PixlError, TimeoutError):
             pass
-        self.set_prn(10)
+        # PRN disabled: receipt notifications arrive asynchronously while
+        # write_gatt_char(response=False) already returns, so consuming them
+        # against a local offset is inherently racy. Integrity is enforced by
+        # crc_check() + execute_object() per object instead (same as nRF Connect).
+        self.set_prn(0)
         self.select_object(C.DFU_OBJ_COMMAND)
         self.create_object(C.DFU_OBJ_COMMAND, len(init_dat))
         self.write_object(init_dat)
