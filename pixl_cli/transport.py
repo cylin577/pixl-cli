@@ -48,12 +48,25 @@ class BleakSyncTransport:
                 service_uuids=[NUS_SERVICE_UUID], timeout=self.timeout
             )
             named = [d for d in devices if self.name and d.name == self.name]
-            if self.name and not named:
-                raise RuntimeError(f"no BLE device named {self.name!r} found")
-            if not named and not devices:
-                raise RuntimeError("no BLE devices found")
-            address = named[0].address if named else devices[0].address
+            if named:
+                address = named[0].address
+            else:
+                from .store import load_devices
+
+                remembered = {d["address"] for d in load_devices()}
+                known = sorted(
+                    (d for d in devices if d.address in remembered),
+                    key=lambda d: -(d.rssi or -999),
+                )
+                if known:
+                    address = known[0].address
+                elif devices:
+                    address = devices[0].address
+                else:
+                    raise RuntimeError("no BLE devices found")
         self._client = BleakClient(address, disconnected_callback=self._on_disconnect)
+        if getattr(self._client, "_mtu_size", None) is None:
+            self._client._mtu_size = 247
         await self._client.connect()
         await self._client.start_notify(self.rx_uuid, self._on_rx)
         self.address = address
@@ -61,7 +74,7 @@ class BleakSyncTransport:
             await self._client._acquire_mtu()
         except AttributeError:
             pass
-        self.mtu_size = self._client._mtu_size or 247
+        self.mtu_size = self._client.mtu_size or 247
         self._connected = True
 
     def _on_rx(self, _handle, value):
