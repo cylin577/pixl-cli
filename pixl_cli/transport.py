@@ -1,12 +1,20 @@
 import asyncio
+import sys
 import threading
 import time
+import warnings
 from collections import deque
 
 try:
     from bleak import BleakClient, BleakScanner
 except ImportError as e:
     raise ImportError("bleak is required for BLE transport: uv sync") from e
+
+IS_LINUX = sys.platform.startswith("linux")
+
+warnings.filterwarnings(
+    "ignore", message="Using default MTU value.*", category=UserWarning
+)
 
 from .consts import (
     NUS_CHAR_RX_UUID,
@@ -65,17 +73,27 @@ class BleakSyncTransport:
                 else:
                     raise RuntimeError("no BLE devices found")
         self._client = BleakClient(address, disconnected_callback=self._on_disconnect)
-        if getattr(self._client, "_mtu_size", None) is None:
-            self._client._mtu_size = 247
         await self._client.connect()
-        await self._client.start_notify(self.rx_uuid, self._on_rx)
         self.address = address
-        try:
-            await self._client._acquire_mtu()
-        except AttributeError:
-            pass
-        self.mtu_size = self._client.mtu_size or 247
+        await self._negotiate_mtu()
+        await self._client.start_notify(self.rx_uuid, self._on_rx)
         self._connected = True
+
+    async def _negotiate_mtu(self):
+        client = self._client
+        acquire = getattr(client, "_acquire_mtu", None)
+        if acquire is not None:
+            try:
+                await acquire()
+            except TypeError:
+                await acquire(None)
+            except Exception:
+                pass
+        mtu = getattr(client, "mtu_size", None)
+        if IS_LINUX:
+            self.mtu_size = mtu or 23
+        else:
+            self.mtu_size = mtu if mtu and mtu > 23 else 247
 
     def _on_rx(self, _handle, value):
         with self._lock:

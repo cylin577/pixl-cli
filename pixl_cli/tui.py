@@ -414,6 +414,16 @@ def _execute_tui(args, cmd, console, timeout=10.0):
         return
 
     targs = SimpleNamespace(**{**vars(args), **overrides})
+
+    if cmd == "mount":
+        try:
+            main.cmd_mount(targs)
+        except KeyboardInterrupt:
+            pass
+        except Exception as e:
+            console.print(f"[red]error: {e}[/red]")
+        return
+
     error = []
 
     def run():
@@ -465,7 +475,11 @@ def flash_ota_package(args, package, console=None):
 
     dfu_addr = _wait_for_dfu_reboot(address, timeout=60.0, console=console)
     if dfu_addr is None:
-        raise RuntimeError(f"timeout waiting for pixl dfu at {address}")
+        raise RuntimeError(
+            f"timeout waiting for pixl dfu at {address}; "
+            "make sure the device rebooted (power-cycle it and retry with "
+            "'pixl ota <package>')"
+        )
     say(f"pixl dfu ready at {dfu_addr}")
 
     transport = BleakSyncTransport(
@@ -572,24 +586,48 @@ def _update_tui(args, console, timeout=10.0):
     console.print("[green]OTA complete, device rebooting[/green]")
 
 
+def is_dfu_device(name, addr, app_address=None):
+    """True when a scanned device looks like the DFU bootloader.
+
+    Matches the bootloader advertising name, or the app device's address once
+    it stops advertising as the Pixl.js application.
+    """
+    if name == "pixl dfu":
+        return True
+    if (
+        app_address
+        and addr
+        and addr.upper() == app_address.upper()
+        and name not in ("Pixl.js", "amiibolink", "AmiLoop")
+    ):
+        return True
+    return False
+
+
 def _wait_for_dfu_reboot(address, timeout=60.0, console=None):
     import time as _time
 
     deadline = _time.monotonic() + timeout
     _time.sleep(2.0)
+    seen = {}
     while _time.monotonic() < deadline:
-        scanner = DeviceScanner(2.0)
+        scanner = DeviceScanner(2.5)
         try:
             scanner.start()
-            scanner._done.wait(3.0)
+            scanner._done.wait(3.5)
             for name, addr, rssi, uuids in scanner.snapshot():
-                if addr.upper() == address.upper() and name == "pixl dfu":
+                seen[addr] = name
+                if is_dfu_device(name, addr, address):
                     return addr
         except Exception:
             pass
         finally:
             scanner.stop()
-        _time.sleep(1.0)
+        if _time.monotonic() < deadline:
+            _time.sleep(0.5)
+    if console is not None and seen:
+        listed = ", ".join(f"{n or '(unknown)'}@{a}" for a, n in seen.items())
+        console.print(f"[dim]devices seen while waiting: {listed}[/dim]")
     return None
 
 

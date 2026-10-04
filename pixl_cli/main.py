@@ -1,6 +1,11 @@
 import argparse
 import os
 import sys
+import warnings
+
+warnings.filterwarnings(
+    "ignore", message="Using default MTU value.*", category=UserWarning
+)
 
 from .session import session
 
@@ -336,21 +341,54 @@ def cmd_update(args):
     console.print("OTA complete, device rebooting")
 
 
+FUSE_HELP = (
+    "fuse support requires fusepy and libfuse:\n"
+    "  uv tool install --force --editable <cli dir> --with fusepy\n"
+    "  (or: uv sync --group dev)"
+)
+
+
 def cmd_mount(args):
-    try:
-        from .fuse_fs import PixlFS
-    except ImportError:
-        sys.exit(
-            "fuse support requires fusepy and libfuse:\n"
-            "  uv tool install --force --editable <cli dir> --with fusepy\n"
-            "  (or: uv sync --group dev)"
-        )
+    from .fuse_fs import (
+        PixlFS,
+        ensure_mountpoint,
+        is_mounted,
+        is_stale_mount,
+        unmount,
+    )
+
     if args.path[0] not in ("I", "E") or not args.path.startswith(("I:/", "E:/")):
         sys.exit("device path root must be I:/ or E:/")
+
+    mountpoint = os.path.abspath(args.mountpoint)
+    if is_mounted(mountpoint):
+        if is_stale_mount(mountpoint):
+            sys.stderr.write(f"cleaning stale mount at {mountpoint} ...\n")
+            if not unmount(mountpoint):
+                sys.exit(
+                    f"stale mount at {mountpoint}; unmount it manually with "
+                    f"'fusermount -u {mountpoint}'"
+                )
+        else:
+            sys.exit(f"already mounted: {mountpoint}")
+    try:
+        ensure_mountpoint(mountpoint)
+    except OSError as e:
+        sys.exit(f"cannot create mountpoint {mountpoint}: {e}")
+
+    try:
+        import fuse  # noqa: F401  (fusepy, named `fuse`)
+    except ImportError:
+        sys.exit(FUSE_HELP)
+
     client = session.client(args)
-    sys.stderr.write(f"mounting {args.path} at {args.mountpoint} (ctrl-c to unmount)\n")
+    sys.stderr.write(f"mounting {args.path} at {mountpoint} (ctrl-c to unmount)\n")
     fs = PixlFS(client, args.path)
-    fs.mount(args.mountpoint, foreground=True)
+    try:
+        fs.mount(mountpoint, foreground=True)
+    finally:
+        if is_mounted(mountpoint):
+            unmount(mountpoint)
 
 
 def main(argv=None):

@@ -65,13 +65,21 @@ pixl update --repo cylin577/pixl.js -y       # download only, no prompts (add --
 ### Mount as local drive
 
 ```
-pixl mount E:/ ~/pixjs-ext
+pixl mount E:/ ~/pixjs-ext              # foreground; ctrl-c to unmount
 ls ~/pixjs-ext/amiibo
 cp mifa.bin ~/pixjs-ext/amiibo/
 getfattr -n user.pixl.note ~/pixjs-ext/amiibo/mifa.bin   # amiibo remark via xattr
 ```
 
-Reads are streamed with chunked transfer; writes are buffered and flushed on `release` (when the writing process closes the file), since the device only supports sequential writes with truncate. Amiibo remarks stored in file meta are exposed as the `user.pixl.note` extended attribute.
+`mount` runs in the foreground (ctrl-c to unmount) and creates the mountpoint if
+it does not exist. A stale mountpoint left behind by a previous crash is detected
+and unmounted automatically; otherwise the command reports it already mounted.
+
+File contents are read from the device once and cached in memory so the kernel
+can service partial reads without re-downloading the whole file over BLE. Writes
+are buffered and flushed on `release` (when the writing process closes the file),
+since the device only supports sequential writes with truncate. Amiibo remarks
+stored in file meta are exposed as the `user.pixl.note` extended attribute.
 
 ### Amiibolink
 

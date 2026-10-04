@@ -5,6 +5,53 @@ import stat as stat_mod
 from . import consts as C
 
 
+def is_mounted(path):
+    path = os.path.abspath(path)
+    try:
+        with open("/proc/self/mounts") as f:
+            for line in f:
+                fields = line.split()
+                if len(fields) >= 2 and fields[1] == path:
+                    return True
+    except OSError:
+        pass
+    return os.path.ismount(path)
+
+
+def is_stale_mount(path):
+    if not is_mounted(path):
+        return False
+    try:
+        os.stat(path)
+        return False
+    except OSError as e:
+        return e.errno in (errno.ENOTCONN, errno.EIO, errno.ENOENT)
+
+
+def unmount(path):
+    import subprocess
+
+    path = os.path.abspath(path)
+    for cmd in (
+        ["fusermount", "-u", path],
+        ["fusermount3", "-u", path],
+        ["umount", path],
+    ):
+        try:
+            if subprocess.run(cmd, capture_output=True).returncode == 0:
+                return True
+        except (FileNotFoundError, OSError):
+            continue
+    return False
+
+
+def ensure_mountpoint(path):
+    path = os.path.abspath(path)
+    if not os.path.isdir(path):
+        os.makedirs(path, exist_ok=True)
+    return path
+
+
 class PixlFS:
     def __init__(self, client, root):
         from fuse import FUSE, Operations
@@ -17,6 +64,7 @@ class PixlFS:
         self._ops = _Ops()
         self._dirs = {}
         self._write_cache = {}
+        self._read_cache = {}
         self._fuse_cls = FUSE
         self._fuse_ops_cls = _Ops
         self._install_handlers()
@@ -75,10 +123,14 @@ class PixlFS:
             return fh
 
         def read(path, size, offset, fh=None):
-            data = fs.client.read_file(fs._dp(path))
+            data = fs._read_cache.get(path)
+            if data is None:
+                data = fs.client.read_file(fs._dp(path))
+                fs._read_cache[path] = data
             return data[offset : offset + size]
 
         def write(path, data, offset, fh=None):
+            fs._read_cache.pop(path, None)
             existing = fs._write_cache.get(path)
             if existing is None:
                 entry = get_entry(path)
@@ -99,11 +151,14 @@ class PixlFS:
 
         def release(path, fh=None):
             data = fs._write_cache.pop(path, None)
+            fs._read_cache.pop(path, None)
             if data is not None:
                 fs.client.write_file(fs._dp(path), data)
+                fs._dirs.pop(os.path.dirname(path), None)
             return 0
 
         def truncate(path, length, fh=None):
+            fs._read_cache.pop(path, None)
             entry = get_entry(path)
             existing = fs._write_cache.get(path)
             if existing is None:
@@ -118,10 +173,13 @@ class PixlFS:
 
         def unlink(path):
             fs.client.remove(fs._dp(path))
+            fs._read_cache.pop(path, None)
+            fs._write_cache.pop(path, None)
             fs._dirs.pop(os.path.dirname(path), None)
 
         def rmdir(path):
             fs.client.remove(fs._dp(path))
+            fs._read_cache.pop(path, None)
             fs._dirs.pop(os.path.dirname(path), None)
 
         def mkdir(path, mode=None):
@@ -134,6 +192,8 @@ class PixlFS:
             if old_dp[0] != new_dp[0]:
                 raise OSError(errno.EXDEV, "cross-device rename not supported")
             data = fs._write_cache.pop(old, None)
+            fs._read_cache.pop(old, None)
+            fs._read_cache.pop(new, None)
             if data is not None:
                 fs.client.write_file(new_dp, data)
                 fs.client.remove(old_dp)
