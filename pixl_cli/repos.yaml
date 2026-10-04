@@ -1,0 +1,11 @@
+# Firmware release sources for `pixl update`.
+# Fetched from
+#   https://raw.githubusercontent.com/cylin577/pixl-cli/main/pixl_cli/repos.yaml
+# on every run; this bundled copy is the offline fallback.
+repos:
+  - repo: solosky/pixl.js
+    name: pixl.js (upstream)
+    description: The OG pixl.js firmware, most stable
+  - repo: cylin577/pixl.js
+    name: pixl.js (cylin577)
+    description: MYYYY OWWWWWNNN CFWWWWWWWWWWWWWW

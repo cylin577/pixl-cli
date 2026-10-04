@@ -179,6 +179,7 @@ ACTIONS = [
     ("rm", "delete a file or folder"),
     ("meta", "show/update file meta"),
     ("format", "format a disk (destructive)"),
+    ("update", "download a firmware release, then optionally flash it"),
     ("dfu", "reboot to DFU, then flash OTA package"),
     ("amiibolink", "write an amiibo dump"),
     ("mount", "mount device storage as local drive (FUSE)"),
@@ -319,6 +320,60 @@ def select_device_menu(console, timeout=10.0):
             return None
 
 
+def choose_index(console, title, labels, default=0):
+    """Pick an index from ``labels`` (list of (primary, secondary)).
+
+    Returns the chosen index or None. Falls back to a numbered prompt when the
+    console is not an interactive terminal.
+    """
+    if not labels:
+        return None
+    if not console.is_terminal:
+        for i, (primary, secondary) in enumerate(labels):
+            suffix = f"  {secondary}" if secondary else ""
+            console.print(f"  [cyan][{i + 1}][/cyan] {primary}{suffix}")
+        try:
+            choice = console.input(f"{title} [default {default + 1}]: ").strip()
+        except EOFError:
+            return None
+        if not choice:
+            return default
+        if choice.isdigit() and 1 <= int(choice) <= len(labels):
+            return int(choice) - 1
+        return None
+
+    from rich.live import Live
+    from rich.table import Table
+
+    from .keys import cbreak_mode, read_key
+
+    cursor = min(max(0, default), len(labels) - 1)
+    with Live(console=console, refresh_per_second=10, transient=True) as live, cbreak_mode():
+        while True:
+            table = Table(title=title, expand=False, box=None)
+            table.add_column("")
+            table.add_column("Name")
+            table.add_column("Info")
+            for i, (primary, secondary) in enumerate(labels):
+                selected = i == cursor
+                table.add_row(
+                    ">" if selected else "",
+                    primary,
+                    secondary or "",
+                    style="reverse" if selected else None,
+                )
+            live.update(table)
+            key = read_key(0.1)
+            if key == "enter":
+                return cursor
+            if key in ("esc", "q", "ctrl-c"):
+                return None
+            if key == "up":
+                cursor = (cursor - 1) % len(labels)
+            if key == "down":
+                cursor = (cursor + 1) % len(labels)
+
+
 def _execute_tui(args, cmd, console, timeout=10.0):
     from types import SimpleNamespace
 
@@ -331,6 +386,10 @@ def _execute_tui(args, cmd, console, timeout=10.0):
         if result:
             remember_device(result["name"], result["address"], result["rssi"])
             console.print(f"[green]selected {result['name']} ({result['address']})[/green]")
+        return
+
+    if cmd == "update":
+        _update_tui(args, console, timeout)
         return
 
     if cmd == "dfu":
@@ -376,39 +435,38 @@ def _execute_tui(args, cmd, console, timeout=10.0):
         console.print(f"[red]error: {error[0]}[/red]")
 
 
-def _dfu_and_ota(args, console, timeout=10.0):
-    import time as _time
+def flash_ota_package(args, package, console=None):
+    """Reboot the device into DFU, wait for it, then flash ``package``.
 
+    Raises RuntimeError on timeout/failure. Uses a live status when ``console``
+    is a terminal, otherwise writes progress to stderr.
+    """
     from .consts import DFU_CP_UUID, DFU_PP_UUID
     from .dfu import SecureDFUClient
     from .session import session
     from .store import remember_device
     from .transport import BleakSyncTransport
 
+    def say(message):
+        if console is not None:
+            console.print(message)
+        else:
+            sys.stderr.write(message + "\n")
+
     client = session.client(args)
     address = session.address
     remember_device(None, address)
-    console.print(f"device {address}: rebooting into DFU mode...")
-
-    def enter_dfu():
-        try:
-            client.enter_dfu()
-        except Exception:
-            pass
-
-    enter_dfu()
+    say(f"device {address}: rebooting into DFU mode...")
+    try:
+        client.enter_dfu()
+    except Exception:
+        pass
     session.reset()
 
     dfu_addr = _wait_for_dfu_reboot(address, timeout=60.0, console=console)
     if dfu_addr is None:
-        console.print("[red]timeout waiting for pixl dfu at " + address + "[/red]")
-        return
-    console.print(f"[green]pixl dfu ready at {dfu_addr}[/green]")
-
-    package = _pick_local_file(console)
-    if package is None:
-        console.print("[dim]no OTA package selected[/dim]")
-        return
+        raise RuntimeError(f"timeout waiting for pixl dfu at {address}")
+    say(f"pixl dfu ready at {dfu_addr}")
 
     transport = BleakSyncTransport(
         address=dfu_addr, name="pixl dfu", timeout=15.0,
@@ -417,24 +475,101 @@ def _dfu_and_ota(args, console, timeout=10.0):
     transport.connect()
     try:
         dfu = SecureDFUClient(transport)
-        error = []
-
-        def run():
-            try:
-                with console.status("flashing OTA package") as status:
-                    dfu.flash_package(package, progress=lambda off, total: status.update(f"flashing: {off}/{total} bytes"))
-            except Exception as e:
-                error.append(e)
-
-        thread = threading.Thread(target=run)
-        thread.start()
-        thread.join()
-        if error:
-            console.print(f"[red]OTA failed: {error[0]}[/red]")
-            return
-        console.print(f"[green]OTA complete: {package} flashed, device rebooting[/green]")
+        if console is not None and console.is_terminal:
+            with console.status("flashing OTA package") as status:
+                dfu.flash_package(
+                    package,
+                    progress=lambda off, total: status.update(f"flashing: {off}/{total} bytes"),
+                )
+        else:
+            dfu.flash_package(package, progress=_stderr_progress("flashing"))
     finally:
         transport.disconnect()
+
+
+def _stderr_progress(label):
+    def progress(offset, total):
+        sys.stderr.write(f"\r{label}: {offset}/{total} bytes")
+        if total and offset >= total:
+            sys.stderr.write("\n")
+
+    return progress
+
+
+def _dfu_and_ota(args, console, timeout=10.0):
+    package = _pick_local_file(console)
+    if package is None:
+        console.print("[dim]no OTA package selected[/dim]")
+        return
+    try:
+        flash_ota_package(args, package, console=console)
+    except Exception as e:
+        console.print(f"[red]OTA failed: {e}[/red]")
+        return
+    console.print(f"[green]OTA complete: {package} flashed, device rebooting[/green]")
+
+
+def _update_tui(args, console, timeout=10.0):
+    from types import SimpleNamespace
+
+    from . import main
+
+    options = SimpleNamespace(**{**vars(args), "repo": None, "tag": None, "board": None})
+    ota = main.update_download(options, console, timeout=timeout)
+    if ota is None:
+        return
+
+    from rich.live import Live
+    from rich.table import Table
+
+    from .keys import cbreak_mode, read_key
+
+    labels = [("flash now", "reboot to DFU and flash"), ("later", "just keep the file")]
+    rows = labels
+    cursor = 0
+    choice = None
+    with Live(console=console, refresh_per_second=10, transient=True) as live, cbreak_mode():
+        while True:
+            table = Table(title=f"OTA ready: {ota} — Enter pick", expand=False, box=None)
+            table.add_column("")
+            table.add_column("Action")
+            table.add_column("Info")
+            for i, (primary, secondary) in enumerate(rows):
+                selected = i == cursor
+                table.add_row(
+                    ">" if selected else "",
+                    primary,
+                    secondary,
+                    style="reverse" if selected else None,
+                )
+            live.update(table)
+            key = read_key(0.1)
+            if key == "enter":
+                choice = rows[cursor][0]
+                break
+            if key in ("esc", "q", "ctrl-c"):
+                break
+            if key == "up":
+                cursor = (cursor - 1) % len(rows)
+            if key == "down":
+                cursor = (cursor + 1) % len(rows)
+    if choice is None:
+        return
+    if choice == "later":
+        console.print(f"[dim]flash later with: pixl ota {ota}[/dim]")
+        return
+
+    device = select_device_menu(console, timeout)
+    if device is None:
+        return
+    targs = SimpleNamespace(**{**vars(args), "address": device["address"], "timeout": args.timeout})
+    console.print("flashing OTA package ...")
+    try:
+        flash_ota_package(targs, ota, console=console)
+    except Exception as e:
+        console.print(f"[red]OTA failed: {e}[/red]")
+        return
+    console.print("[green]OTA complete, device rebooting[/green]")
 
 
 def _wait_for_dfu_reboot(address, timeout=60.0, console=None):

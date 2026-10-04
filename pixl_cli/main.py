@@ -180,6 +180,162 @@ def cmd_ota(args):
         transport.disconnect()
 
 
+def _download_progress(label):
+    def progress(offset, total):
+        if total:
+            sys.stderr.write(f"\r{label}: {offset}/{total} bytes ({offset * 100 // total}%)")
+        else:
+            sys.stderr.write(f"\r{label}: {offset} bytes")
+        if total and offset >= total:
+            sys.stderr.write("\n")
+
+    return progress
+
+
+def _select_repo(args, repos, console):
+    from .tui import choose_index
+
+    if getattr(args, "repo", None):
+        wanted = args.repo.lower()
+        for r in repos:
+            if wanted in (r["repo"].lower(), r["name"].lower()):
+                return r
+        for r in repos:
+            if wanted in r["repo"].lower() or wanted in r["name"].lower():
+                return r
+        sys.exit(
+            f"repo not in list: {args.repo} "
+            f"(available: {', '.join(r['repo'] for r in repos)})"
+        )
+    labels = [(r["name"], r["description"]) for r in repos]
+    idx = choose_index(console, "Select firmware source — Enter pick, esc cancel", labels)
+    return repos[idx] if idx is not None else None
+
+
+def _select_release(args, releases, console):
+    from .tui import choose_index
+
+    if getattr(args, "tag", None):
+        matches = [r for r in releases if args.tag.lower() in r["tag"].lower()]
+        if not matches:
+            sys.exit(f"no release tag matching {args.tag!r}")
+    else:
+        matches = releases
+        if console.is_terminal:
+            try:
+                query = console.input("filter tags (blank = all): ").strip()
+            except EOFError:
+                query = ""
+            if query:
+                filtered = [r for r in matches if query.lower() in r["tag"].lower()]
+                if filtered:
+                    matches = filtered
+    if len(matches) == 1:
+        return matches[0]
+    labels = []
+    for r in matches:
+        info = r["published"][:10]
+        if r["prerelease"]:
+            info = (info + " prerelease").strip()
+        labels.append((r["tag"], info))
+    idx = choose_index(console, "Select release — Enter pick, esc cancel", labels)
+    return matches[idx] if idx is not None else None
+
+
+def _select_board(args, console):
+    from .tui import choose_index
+
+    if getattr(args, "board", None):
+        return args.board.upper()
+    idx = choose_index(
+        console,
+        "Select device screen — Enter pick, esc cancel",
+        [("OLED", "OLED display device"), ("LCD", "LCD display device")],
+    )
+    return ("OLED", "LCD")[idx] if idx is not None else None
+
+
+def update_download(args, console=None, timeout=10.0):
+    """Pick a repo/release/board, download it via the proxy and extract the OTA zip.
+
+    Returns the path to the extracted ``pixjs_ota_v*.zip`` or None if cancelled.
+    """
+    from . import release
+    from rich.console import Console
+
+    if console is None:
+        console = Console()
+
+    try:
+        repos = release.load_repo_list()
+    except release.ReleaseError as e:
+        sys.exit(str(e))
+
+    repo = _select_repo(args, repos, console)
+    if repo is None:
+        return None
+
+    try:
+        releases = release.list_releases(repo["repo"], timeout=timeout)
+    except release.ReleaseError as e:
+        sys.exit(str(e))
+    if not releases:
+        sys.exit(f"no releases found for {repo['repo']}")
+
+    rel = _select_release(args, releases, console)
+    if rel is None:
+        return None
+
+    board = _select_board(args, console)
+    if board is None:
+        return None
+
+    dest_dir = os.path.join(release.RELEASES_DIR, rel["tag"])
+    name = release.asset_name(rel["tag"], board)
+    console.print(
+        f"downloading [bold]{name}[/bold] from {repo['repo']} ({rel['tag']}) ..."
+    )
+    try:
+        outer = release.download_release(
+            repo["repo"], rel["tag"], board,
+            dest_dir=dest_dir, progress=_download_progress("download"),
+        )
+        ota = release.extract_ota(outer, dest_dir)
+    except release.ReleaseError as e:
+        sys.exit(str(e))
+    console.print(f"OTA package ready: [green]{ota}[/green]")
+    return ota
+
+
+def cmd_update(args):
+    from rich.console import Console
+    from .tui import flash_ota_package
+
+    console = Console()
+    ota = update_download(args, console, timeout=args.timeout)
+    if ota is None:
+        return
+
+    if args.yes and not args.flash:
+        console.print(f"flash later with: pixl ota {ota}")
+        return
+    if not args.flash:
+        try:
+            answer = console.input("flash now? (y/N): ").strip().lower()
+        except EOFError:
+            answer = "n"
+        if answer != "y":
+            console.print(f"flash later with: pixl ota {ota}")
+            return
+
+    console.print("flashing OTA package ...")
+    try:
+        flash_ota_package(args, ota, console=console)
+    except Exception as e:
+        sys.exit(f"OTA failed: {e}")
+    console.print("OTA complete, device rebooting")
+
+
 def cmd_mount(args):
     try:
         from .fuse_fs import PixlFS
@@ -256,6 +412,16 @@ def main(argv=None):
     p = sub.add_parser("ota", help="flash an OTA package (.zip) over BLE DFU")
     p.add_argument("package", help="OTA package .zip (or raw .bin)")
     p.set_defaults(func=cmd_ota)
+
+    p = sub.add_parser("update", help="download a firmware release, then optionally flash it")
+    p.add_argument("--repo", help="repo slug from the list, e.g. solosky/pixl.js")
+    p.add_argument("--tag", help="release tag (substring match); default latest")
+    p.add_argument("--board", type=str.upper, choices=["LCD", "OLED"], help="device screen type")
+    p.add_argument("-y", "--yes", action="store_true",
+                   help="skip prompts (download only unless --flash is given)")
+    p.add_argument("--flash", action="store_true",
+                   help="flash the downloaded package without prompting")
+    p.set_defaults(func=cmd_update)
 
     p = sub.add_parser("amiibolink", help="write an amiibo dump over amiibolink protocol")
     p.add_argument("file", help="amiibo dump .bin file")

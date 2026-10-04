@@ -35,6 +35,7 @@ pixl meta E:/amiibo/mifa.bin       # show file meta (notes/flags/amiibo id)
 pixl meta E:/amiibo/mifa.bin --note "my pick" --hide
 pixl dfu                           # reboot into DFU bootloader
 pixl ota pixjs_ota_v123.zip        # flash OTA package over BLE (Nordic secure DFU)
+pixl update                        # download a firmware release, then optionally flash it
 ```
 
 The BLE connection is kept alive per session: run several commands against the same device and they reuse one connection (errors/disconnects reset it and the next command reconnects).
@@ -42,6 +43,24 @@ The BLE connection is kept alive per session: run several commands against the s
 ### OTA update flow
 
 `pixl dfu` reboots the device into the DFU bootloader; in the TUI, the dfu action then waits for the device to come back as `pixl dfu` on the same MAC, auto-reconnects and opens an OTA package selector (local `.zip`/`.bin`), then flashes it with CRC-validated object transfer (Nordic secure DFU, service `0xFE59`). Standalone: `pixl ota <package.zip> --address <MAC>`.
+
+### Downloading a firmware release
+
+`pixl update` fetches the predefined repo list from
+`https://raw.githubusercontent.com/cylin577/pixl-cli/main/pixl_cli/repos.yaml`
+(bundled `pixl_cli/repos.yaml` is the offline fallback), lets you pick a repo and
+a release tag (latest by default), and asks whether the device has an OLED or LCD
+screen. It downloads the matching `*_OLED.zip`/`*_LCD.zip` through the
+`ghs.cylin577.fyi` proxy, extracts the inner `pixjs_ota_vX.zip` into
+`~/.cache/pixl-cli/releases/<tag>/`, then offers to flash it now (reboot to DFU
+and run the normal OTA flow) or later.
+
+```
+pixl update                                  # interactive: repo → tag → OLED/LCD → flash?
+pixl update --repo solosky/pixl.js           # skip repo picker
+pixl update --tag v2.17 --board OLED         # substring tag match + explicit board
+pixl update --repo cylin577/pixl.js -y       # download only, no prompts (add --flash to flash)
+```
 
 ### Mount as local drive
 
